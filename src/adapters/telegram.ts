@@ -1,5 +1,23 @@
-function toUpdate({ update_id, message }) {
-  const update = { id: update_id };
+import type { MessageOperations, MessageUpdate } from '../application/check-messages.ts';
+
+interface TelegramMessage {
+  chat: { id: number };
+  message_id: number;
+  message_thread_id?: number;
+  text?: string;
+}
+
+interface TelegramUpdate {
+  update_id: number;
+  message?: TelegramMessage;
+}
+
+type TelegramResponse<Result> =
+  | { ok: true; result: Result }
+  | { ok: false; error_code?: number };
+
+function toUpdate({ update_id, message }: TelegramUpdate): MessageUpdate {
+  const update: MessageUpdate = { id: update_id };
   if (typeof message?.text === 'string') {
     update.message = {
       chatId: message.chat.id,
@@ -11,18 +29,22 @@ function toUpdate({ update_id, message }) {
   return update;
 }
 
-export function createTelegramAdapter(token) {
-  async function request(method, parameters = {}) {
+export function createTelegramAdapter(token: string): MessageOperations {
+  async function request<Result>(
+    method: 'getUpdates' | 'sendMessage',
+    parameters: Record<string, unknown> = {},
+  ): Promise<Result | null> {
     try {
       const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parameters),
       });
-      const data = await response.json();
+      const data: TelegramResponse<Result> = await response.json();
       if (response.ok && data.ok) return data.result;
 
-      console.error(`Telegram ${method} failed (API ${data.error_code ?? response.status}).`);
+      const errorCode = data.ok ? response.status : data.error_code ?? response.status;
+      console.error(`Telegram ${method} failed (API ${errorCode}).`);
     } catch {
       console.error(`Could not complete Telegram ${method} request.`);
     }
@@ -31,14 +53,14 @@ export function createTelegramAdapter(token) {
 
   return {
     async getUpdates() {
-      const updates = await request('getUpdates');
+      const updates = await request<TelegramUpdate[]>('getUpdates');
       return (updates ?? []).map(toUpdate);
     },
 
     async sendReply(message, text) {
       const characters = Array.from(text);
       for (let start = 0; start < characters.length; start += 4096) {
-        const sent = await request('sendMessage', {
+        const sent = await request<TelegramMessage>('sendMessage', {
           chat_id: message.chatId,
           message_thread_id: message.threadId,
           reply_parameters: { message_id: message.id },
@@ -51,7 +73,7 @@ export function createTelegramAdapter(token) {
 
     async confirmUpdates(lastProcessedId) {
       // Telegram confirms only updates with IDs below the offset.
-      await request('getUpdates', { offset: lastProcessedId + 1, limit: 1 });
+      await request<TelegramUpdate[]>('getUpdates', { offset: lastProcessedId + 1, limit: 1 });
     },
   };
 }
