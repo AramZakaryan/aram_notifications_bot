@@ -1,3 +1,8 @@
+import { createTelegramAdapter } from './adapters/telegram.js';
+import { checkMessages } from './application/check-messages.js';
+import { startHttpServer } from './presentation/http-server.ts';
+import { pollMessages } from './presentation/poll-messages.js';
+
 const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 
 if (!token) {
@@ -5,33 +10,9 @@ if (!token) {
   process.exit(1);
 }
 
-try {
-  let offset = 0;
-  for (const { update_id, message } of await getUpdates()) {
-    if (typeof message?.text === 'string') {
-      console.log(message.text);
-    }
-    offset = Math.max(offset, update_id + 1);
-  }
+const port = Number(process.env.PORT ?? 3000);
+const server = await startHttpServer(port);
+console.log(`Health endpoint: http://127.0.0.1:${server.address().port}/health`);
 
-  // Telegram confirms only updates with IDs below this offset.
-  if (offset > 0) {
-    await getUpdates(`?offset=${offset}&limit=1`);
-  }
-} catch {
-  console.error('Could not complete a request to Telegram.');
-  process.exitCode = 1;
-}
-
-async function getUpdates(query = '') {
-  const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates${query}`);
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    console.error(`Telegram getUpdates failed (API ${data.error_code ?? response.status}).`);
-    process.exitCode = 1;
-    return [];
-  }
-
-  return data.result;
-}
+const telegram = createTelegramAdapter(token);
+await pollMessages((showMessage) => checkMessages(telegram, showMessage));
